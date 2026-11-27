@@ -16,6 +16,7 @@ import uuid
 
 from flask import Flask, jsonify, render_template, request, session
 
+from .calibrate import CalibrateInputError, calibrate, extract_fault_id
 from .engine import (
     TableValidationError,
     spent_seconds,
@@ -268,6 +269,43 @@ def create_app(table_path: str | None = None) -> Flask:
             return jsonify({"error": str(exc)}), 400
         analysis["spent_seconds"] = spent_seconds(table, readings, restarted)
         return jsonify({"table": table, "analysis": analysis})
+
+    # ---------------- 工单校订 ----------------
+    @app.post("/api/calibrate")
+    def api_calibrate():
+        """用已确认故障的 1~8 份工单校订该故障的预期读数列。
+
+        body: {"fault"/"fault_id"/"故障": "F3", "orders": [工单...],
+               "table": {...可选，缺省用当前会话表...}}
+        返回 status ∈ no_change_needed / unique / tied / no_solution；
+        unique 时附 changed_cells（前后值）与可重新载入的校订表 JSON。
+        """
+        body = request.get_json(silent=True)
+        if body is None:
+            return jsonify({"ok": False, "errors": ["请求体必须是 JSON 对象"]}), 400
+
+        if body.get("table") is not None:
+            from .engine import normalize_table
+
+            try:
+                table = normalize_table(body["table"])
+            except TableValidationError as exc:
+                return jsonify({"ok": False, "errors": ["故障表不合法："] + exc.errors}), 422
+        else:
+            case = get_case()
+            if case is None:
+                return jsonify({"ok": False, "errors": ["默认故障表不可用"]}), 500
+            table = case["table"]
+
+        try:
+            fault_id = extract_fault_id(body, table)
+            raw_orders = body.get("orders", body.get("工单"))
+            result = calibrate(table, fault_id, raw_orders)
+        except CalibrateInputError as exc:
+            return jsonify({"ok": False, "errors": exc.errors}), 422
+
+        result["ok"] = True
+        return jsonify(result)
 
     @app.errorhandler(413)
     def too_large(_exc):

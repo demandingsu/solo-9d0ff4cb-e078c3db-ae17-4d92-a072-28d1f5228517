@@ -235,6 +235,34 @@ tbody.row-invalid td.entry-cell { background: #fff5f5; }
 .help-card ol { margin: 0; padding-left: 20px; color: var(--ink-2); font-size: 13px; }
 .help-card li { margin: 7px 0; }
 
+/* ---------- 工单校订 ---------- */
+.cal-card .card-head p { max-width: 100%; }
+.cal-form {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 12px 14px; background: #f8fafc; border: 1px dashed var(--line);
+  border-radius: 11px; margin-bottom: 4px;
+}
+.cal-field { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600; }
+.cal-field select {
+  padding: 8px 10px; font-size: 14px; border: 1.5px solid var(--line);
+  border-radius: 9px; background: #fff; max-width: 320px;
+}
+.btn-cal {
+  background: #fff; color: var(--ink-2); border: 1.5px solid var(--line);
+}
+.btn-cal:hover { background: var(--blue-bg); border-color: var(--blue-line); color: var(--blue); }
+.cal-hero { margin-top: 14px; }
+.cal-diff-table { border-collapse: collapse; width: 100%; background: #fff; font-size: 14px; }
+.cal-diff-table th, .cal-diff-table td {
+  border-bottom: 1px solid var(--line); padding: 8px 12px; text-align: left;
+}
+.cal-diff-table thead th { background: #f8fafc; font-weight: 700; }
+.cal-diff-table .cal-before { color: var(--muted); text-decoration: line-through; }
+.cal-diff-table .cal-arrow { color: var(--blue); font-weight: 800; text-align: center; }
+.cal-diff-table .cal-after { color: var(--green); font-weight: 700; }
+.cal-actions { display: flex; gap: 10px; margin-top: 14px; flex-wrap: wrap; }
+.cal-actions .btn-cal { padding: 11px 20px; font-size: 15px; font-weight: 600; }
+
 .footer { text-align: center; color: var(--muted); font-size: 12.5px; padding: 10px 0 26px; }
 
 .toast {

@@ -161,3 +161,120 @@ def test_multipart_file_upload(client):
     r = client.post("/api/table/load", data=data, content_type="multipart/form-data")
     assert r.status_code == 200
     assert r.get_json()["table"]["title"] == "接口测试表"
+
+
+# ---------------- 工单校订 API ----------------
+
+def cal_orders_sample():
+    """样例表 F3 的三份工单：唯一解改 C5。"""
+    return [
+        {"id": "WO-1", "readings": {"C5": "E03 电源自检失败", "C8": "无信号输出"}},
+        {"id": "WO-2", "readings": {"C5": "E03 电源自检失败", "C8": "无信号输出"}},
+        {"id": "WO-3", "readings": {"C5": "E03 电源自检失败", "C8": "无信号"}},
+    ]
+
+
+def test_calibrate_unique_against_session_table(client):
+    r = client.post("/api/calibrate",
+                    json={"fault_id": "F3", "orders": cal_orders_sample()})
+    assert r.status_code == 200
+    body = r.get_json()
+    assert body["ok"] is True
+    assert body["status"] == "unique"
+    assert body["min_changes"] == 1
+    assert body["changed_cells"] == [{
+        "check_id": "C5", "check_name": "重启前面板故障代码", "phase": "pre",
+        "before": "无代码", "after": "E03 电源自检失败",
+    }]
+    # 每单最多一项不符
+    assert all(o["mismatch_count"] <= 1 for o in body["orders_check"])
+    # 校订表可重新载入并驱动会话
+    r2 = client.post("/api/table/load", json=body["table"])
+    assert r2.status_code == 200
+    t = r2.get_json()["table"]
+    c5 = next(c for c in t["checks"] if c["id"] == "C5")
+    assert c5["expected"]["F3"] == "E03 电源自检失败"
+    assert r2.get_json()["analysis"]["guaranteed"] is True
+
+
+def test_calibrate_no_change_needed(client):
+    r = client.post("/api/calibrate", json={
+        "fault": "F3",
+        "orders": [{"readings": {"C1": "不亮", "C2": "全无", "C5": "无代码"}}],
+    })
+    assert r.status_code == 200
+    assert r.get_json()["status"] == "no_change_needed"
+    assert r.get_json()["table"] is None
+
+
+def test_calibrate_tied_and_no_solution(client):
+    tiny = {
+        "faults": [{"id": "T"}, {"id": "G"}],
+        "checks": [
+            {"id": "C1", "phase": "pre", "seconds": 1, "expected": {"T": "x", "G": "y"}},
+            {"id": "C2", "phase": "pre", "seconds": 1, "expected": {"T": "p", "G": "p"}},
+        ],
+    }
+    r = client.post("/api/calibrate", json={
+        "table": tiny, "fault_id": "T",
+        "orders": [{"readings": {"C1": "a", "C2": "q"}}],
+    })
+    assert r.get_json()["status"] == "tied"
+    assert r.get_json()["table"] is None
+
+    r2 = client.post("/api/calibrate", json={
+        "table": tiny, "fault_id": "T",
+        "orders": [
+            {"readings": {"C1": "a1", "C2": "b1"}},
+            {"readings": {"C1": "a2", "C2": "b2"}},
+            {"readings": {"C1": "a3", "C2": "b3"}},
+        ],
+    })
+    assert r2.get_json()["status"] == "no_solution"
+
+
+def test_calibrate_input_errors(client):
+    # 缺故障编号
+    r = client.post("/api/calibrate", json={"orders": [{"readings": {}}]})
+    assert r.status_code == 422
+    assert r.get_json()["ok"] is False
+    # 故障不存在
+    r = client.post("/api/calibrate", json={"fault_id": "FX", "orders": [{"readings": {}}]})
+    assert r.status_code == 422
+    # 工单数超限
+    r = client.post("/api/calibrate", json={
+        "fault_id": "F3", "orders": [{"readings": {}} for _ in range(9)]})
+    assert r.status_code == 422
+    assert any("最多" in e for e in r.get_json()["errors"])
+    # 未知检查编号
+    r = client.post("/api/calibrate", json={
+        "fault_id": "F3", "orders": [{"readings": {"C99": "x"}}]})
+    assert r.status_code == 422
+    assert any("C99" in e for e in r.get_json()["errors"])
+    # 非 JSON 请求体
+    r = client.post("/api/calibrate", data="not json",
+                    content_type="application/json")
+    assert r.status_code == 400
+
+
+def test_calibrate_uses_loaded_custom_table(client):
+    """载入自定义表后，校订作用于该表（会话表）。"""
+    tiny = {
+        "faults": [{"id": "T"}, {"id": "G"}],
+        "checks": [
+            {"id": "C1", "phase": "pre", "seconds": 1, "expected": {"T": "x", "G": "y"}},
+            {"id": "C2", "phase": "pre", "seconds": 1, "expected": {"T": "p", "G": "p"}},
+        ],
+    }
+    assert client.post("/api/table/load", json=tiny).status_code == 200
+    r = client.post("/api/calibrate", json={
+        "fault_id": "T",
+        "orders": [{"readings": {"C1": "y", "C2": "q"}},
+                   {"readings": {"C1": "y", "C2": "p"}}],
+    })
+    body = r.get_json()
+    # k=1 改 C1=y 会破坏 (T,G) 区分；改 C2=q 会让工单2（C2 记原值 p）两项不符。
+    # 唯一解是 k=2：C1→y、C2→q，(T,G) 转而靠 C2 区分。
+    assert body["status"] == "unique"
+    assert body["min_changes"] == 2
+    assert [c["check_id"] for c in body["changed_cells"]] == ["C1", "C2"]

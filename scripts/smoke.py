@@ -140,6 +140,58 @@ def main():
           st == 200 and aa["recommendation"]["kind"] == "restart"
           and aa["worst_remaining_seconds"] == 3, str(aa))
 
+    # ---- 会话 D：工单校订（样例表 F3，唯一解改 C5）----
+    d = Client()
+    orders = [
+        {"id": "WO-1", "readings": {"C5": "E03 电源自检失败", "C8": "无信号输出"}},
+        {"id": "WO-2", "readings": {"C5": "E03 电源自检失败", "C8": "无信号输出"}},
+        {"id": "WO-3", "readings": {"C5": "E03 电源自检失败", "C8": "无信号"}},
+    ]
+    st, body = d.call("POST", "/api/calibrate", {"fault_id": "F3", "orders": orders})
+    check("校订返回 200 且方案唯一", st == 200 and body.get("status") == "unique", str(body)[:200])
+    cells = body.get("changed_cells", [])
+    check("唯一解改 C5（无代码 -> E03 电源自检失败）",
+          len(cells) == 1 and cells[0]["check_id"] == "C5"
+          and cells[0]["before"] == "无代码" and cells[0]["after"] == "E03 电源自检失败",
+          str(cells))
+    check("每单最多一项不符",
+          all(o["mismatch_count"] <= 1 for o in body.get("orders_check", [])))
+    st, body2 = d.call("POST", "/api/table/load", body.get("table"))
+    check("校订表可重新载入且仍可保证查明",
+          st == 200 and body2["analysis"]["guaranteed"] is True)
+    c5 = next(c for c in body2["table"]["checks"] if c["id"] == "C5")
+    check("载入后 C5/F3 预期值已更新", c5["expected"]["F3"] == "E03 电源自检失败")
+
+    # 原表已符合 -> 无需校订
+    st, body = d.call("POST", "/api/calibrate", {
+        "fault_id": "F3",
+        "orders": [{"readings": {"C1": "不亮", "C2": "全无"}}],
+    })
+    check("一致工单 -> 无需校订", st == 200 and body.get("status") == "no_change_needed")
+
+    # 并列 / 无解 / 输入错误
+    tiny2 = {
+        "faults": [{"id": "T"}, {"id": "G"}],
+        "checks": [
+            {"id": "C1", "phase": "pre", "seconds": 1, "expected": {"T": "x", "G": "y"}},
+            {"id": "C2", "phase": "pre", "seconds": 1, "expected": {"T": "p", "G": "p"}},
+        ],
+    }
+    st, body = d.call("POST", "/api/calibrate", {
+        "table": tiny2, "fault_id": "T",
+        "orders": [{"readings": {"C1": "a", "C2": "q"}}]})
+    check("两种改法 -> 并列不出表", st == 200 and body.get("status") == "tied"
+          and body.get("table") is None)
+    st, body = d.call("POST", "/api/calibrate", {
+        "table": tiny2, "fault_id": "T",
+        "orders": [{"readings": {"C1": "a1", "C2": "b1"}},
+                   {"readings": {"C1": "a2", "C2": "b2"}},
+                   {"readings": {"C1": "a3", "C2": "b3"}}]})
+    check("三单冲突 -> 无解", st == 200 and body.get("status") == "no_solution")
+    st, body = d.call("POST", "/api/calibrate", {
+        "fault_id": "F3", "orders": [{"readings": {}} for _ in range(9)]})
+    check("工单超过 8 份 -> 422", st == 422)
+
     print(f"\n结果：{PASS} passed, {FAIL} failed")
     sys.exit(1 if FAIL else 0)
 

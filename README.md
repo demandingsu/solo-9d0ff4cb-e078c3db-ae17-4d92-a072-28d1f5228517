@@ -22,6 +22,8 @@
 | 只剩一种故障报结果 | 绿色结果卡，给出故障编号、名称与处置建议 |
 | 读数与所有故障不符提示核对 | 红色提示卡，指出哪些取值不在任何故障预期中，或说明是组合矛盾；对应输入框标红 |
 | 无法保证查明时列出分不清的故障组 | 按“当前仍可达的未做检查”的预期读数签名做等价分类，输出大小 ≥2 的组（样例中立刻重启会得到 3 组） |
+| 工单校订故障表 | 排查页上传同一已确认故障的 1～8 份 JSON 工单；`app/calibrate.py` 只校订该故障列，每格取原值或工单值（等价读数算同一个），约束每单最多一项不符、全表/仅重启后检查可区分的故障对校订后仍可区分；按改格数迭代加深 + 分支限界找最少改格方案 |
+| 校订四种结果 | 原表已符合→提示无需校订；方案唯一→列出前后值并提供可重新载入的校订表 JSON（可下载/一键载入）；无解/并列→分别提示且不出表 |
 | Docker Compose 启动 | `Dockerfile` + `docker-compose.yml` + `/healthz` 健康检查 |
 
 ## 快速开始
@@ -48,8 +50,8 @@ python3 wsgi.py                 # 或 gunicorn -w 1 --threads 8 -b 0.0.0.0:8000 
 
 ```bash
 python3 -m pip install pytest
-python3 -m pytest               # 32 passed
-python3 scripts/smoke.py        # 需先在 8000 端口启动服务；22 项 HTTP 断言
+python3 -m pytest               # 58 passed
+python3 scripts/smoke.py        # 需先在 8000 端口启动服务；31 项 HTTP 断言
 ```
 
 ## JSON 故障表格式
@@ -129,15 +131,43 @@ python3 scripts/smoke.py        # 需先在 8000 端口启动服务；22 项 HTT
 - `GET  /api/table/sample`：下载当前服务端表文件
 - `POST /api/analyze`（别名 `/api/recommend`）：无状态分析，
   body `{"table": {...可选...}, "readings": {"C2": "..."}, "restarted": false}`
+- `POST /api/calibrate`：工单校订，body `{"fault_id": "F3", "orders": [工单...],
+  "table": {...可选，缺省用当前会话表...}`；返回
+  `status ∈ no_change_needed / unique / tied / no_solution`，
+  `unique` 时附 `changed_cells`（前后值）与可重新载入的校订表 `table`
+
+## 工单 JSON 格式（校订用）
+
+```json
+{
+  "fault_id": "F3",
+  "orders": [
+    {"id": "WO-001", "readings": {"C5": "E03 电源自检失败", "C8": "无信号输出"}},
+    {"工单号": "WO-002", "readings": {"C5": "E03 电源自检失败", "C8": "无信号"}}
+  ]
+}
+```
+
+- 页面上传时每个文件可以是一份工单，也可以是含 `orders` 数组的批量文件；
+  故障编号以页面下拉为准。
+- 每份工单：`readings`（也兼容 `实测读数/检查结果/records` 等键名，或把检查
+  编号直接写在工单对象上）给出 {检查编号: 实测读数}；空项（null/空白）不计；
+  引用表中不存在的检查编号会报 422 并逐条说明。
+- 校订规则：只改该故障列；每格只能取原值或工单中该项出现过的值（按
+  `canonical_reading` 等价归并）；每份工单最多一项与校订表不符；原本能用
+  全表区分的故障对、以及原本仅靠重启后检查就能区分的故障对，校订后各自
+  仍须能区分。满足条件的方案中取改格数最少的，唯一才出表。
 
 ## 已知限制 / 未完成项（如实说明）
 
 - 本开发沙箱没有安装 Docker / Docker daemon，因此 **`docker compose up`
   未能在本机实际跑过**；已用 PyYAML 校验 compose 文件、按镜像同样的
-  gunicorn 命令在宿主机完成 22 项真实 HTTP 冒烟。Dockerfile 为标准
+  gunicorn 命令在宿主机完成 31 项真实 HTTP 冒烟。Dockerfile 为标准
   `python:3.11-slim + gunicorn` 单 worker 配置。
 - 案例状态保存在**进程内存**（单 worker 多线程），重启容器会丢失排查进度；
   面向单展厅/单人使用足够，多副本部署需换共享存储或改用无状态 `/api/analyze`。
 - 未做真实浏览器自动化/截图验证；已通过 `node --check` 与 HTTP 层测试，
   前端为原生 JS。
 - 读数匹配为归一化精确匹配（含大小写/数字宽容），未实现模糊匹配与量纲换算。
+- 工单校订的搜索按改格数迭代加深，规模上限（10 检查 × 8 工单）内实测
+  毫秒级完成；并列方案只报“存在多个”，不枚举全部候选（按需求暂不出表）。

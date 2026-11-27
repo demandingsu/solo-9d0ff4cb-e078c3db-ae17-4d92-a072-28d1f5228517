@@ -43,6 +43,28 @@
           <p class="loading">正在载入故障表…</p>
         </div>
       </section>
+
+      <section class="card cal-card" id="calibrate-card">
+        <div class="card-head">
+          <h2>🧾 工单校订故障表</h2>
+          <p class="muted">
+            上传同一<strong>已确认故障</strong>的 1～8 份 JSON 工单（按检查编号给出实测读数，空项不计），
+            校订当前表中该故障的预期读数：每格只取原值或工单中出现过的值（等价读数视为同一个），
+            每份工单允许有一项抄错；原本能用全表 / 仅靠重启后检查区分的故障对，校订后仍须能区分。
+            取改格数最少的方案；方案唯一才出表。
+          </p>
+        </div>
+        <div class="cal-form">
+          <label class="cal-field">已确认故障
+            <select id="cal-fault"></select>
+          </label>
+          <button id="btn-cal-files" class="btn btn-cal">📎 选择工单 JSON（1～8 个）</button>
+          <input type="file" id="cal-files" accept=".json,application/json" multiple hidden />
+          <span id="cal-file-list" class="muted"></span>
+          <button id="btn-cal-run" class="btn-solid" disabled>🔧 开始校订</button>
+        </div>
+        <div id="cal-result"></div>
+      </section>
     </section>
 
     <aside class="side-col">
@@ -56,6 +78,7 @@
           <li>需要时<strong>登记一次重启</strong>，重启耗时计入总时间；重启后不能再补做重启前检查。</li>
           <li>按顶部推荐执行，每录入一条读数，推荐会即时调整。</li>
           <li>只剩一种故障时直接报结果；读数无匹配时请核对；无法保证查明时会列出仍分不清的故障组。</li>
+          <li>查明故障后，可在下方「工单校订」上传该故障的维修工单，用实测读数校订故障表。</li>
         </ol>
       </section>
     </aside>

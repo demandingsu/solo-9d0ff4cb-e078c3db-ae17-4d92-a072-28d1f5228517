@@ -398,6 +398,7 @@ function render() {
   renderGroups();
   renderMatrix();
   renderSide();
+  renderCalFaultOptions();
 }
 
 /* ---------------- 操作 ---------------- */
@@ -454,6 +455,169 @@ async function doReset() {
   }
 }
 
+/* ---------------- 工单校订 ---------------- */
+let CAL_FILES = [];      // 已选择的工单文件（File 对象）
+let CAL_LAST = null;     // 最近一次校订结果（用于下载/载入）
+
+function renderCalFaultOptions() {
+  const sel = $("cal-fault");
+  if (!sel || !DATA) return;
+  const prev = sel.value;
+  const faults = DATA.table.faults || [];
+  sel.innerHTML = faults
+    .map((f) => `<option value="${esc(f.id)}">${esc(f.id)} · ${esc(f.name)}</option>`)
+    .join("");
+  const singleId = DATA.analysis && DATA.analysis.status === "single" && DATA.analysis.fault
+    ? DATA.analysis.fault.id : null;
+  if (prev && faults.some((f) => f.id === prev)) sel.value = prev;
+  else if (singleId) sel.value = singleId;
+}
+
+function renderCalFileList() {
+  const el = $("cal-file-list");
+  if (!CAL_FILES.length) {
+    el.textContent = "未选择文件";
+  } else {
+    el.textContent = `已选 ${CAL_FILES.length} 份：` + CAL_FILES.map((f) => f.name).join("、");
+  }
+  $("btn-cal-run").disabled = !CAL_FILES.length;
+}
+
+async function collectOrders(files) {
+  const orders = [];
+  for (const file of files) {
+    let obj;
+    try { obj = JSON.parse(await file.text()); }
+    catch (e) { throw new Error(`工单文件 ${file.name} 不是合法 JSON：${e.message}`); }
+    if (obj && Array.isArray(obj.orders)) orders.push(...obj.orders);
+    else if (obj && Array.isArray(obj["工单"])) orders.push(...obj["工单"]);
+    else orders.push(obj);
+  }
+  if (!orders.length) throw new Error("未从文件中解析到任何工单");
+  if (orders.length > 8) throw new Error(`工单最多 8 份，当前共 ${orders.length} 份`);
+  return orders;
+}
+
+function renderCalResult(r) {
+  const slot = $("cal-result");
+  CAL_LAST = r;
+  if (r.status === "no_change_needed") {
+    slot.innerHTML = `
+      <div class="hero hero-green cal-hero">
+        <h2>✅ 无需校订</h2>
+        <p class="lead">原表中「${esc(r.fault_id)} ${esc(r.fault_name)}」的预期读数已符合全部
+        ${r.order_count} 份工单（每单不符不超过一项），故障表保持不变。</p>
+      </div>`;
+    return;
+  }
+  if (r.status === "no_solution") {
+    slot.innerHTML = `
+      <div class="hero hero-red cal-hero">
+        <h2>⛔ 无解：不存在满足条件的校订方案</h2>
+        <p class="lead">在「每格只取原值或工单值、每单最多一项不符、故障对区分能力不退化」的约束下，
+        没有任何改法能让全部 ${r.order_count} 份工单成立。请核对工单读数或确认故障是否判对。</p>
+      </div>`;
+    return;
+  }
+  if (r.status === "tied") {
+    slot.innerHTML = `
+      <div class="hero hero-amber cal-hero">
+        <h2>⚖️ 并列：最少改格（${r.min_changes} 格）的方案不止一个</h2>
+        <p class="lead">存在多个改动数同为 ${r.min_changes} 格的校订方案，无法唯一确定，暂不出表。
+        请补充更多工单后再试。</p>
+      </div>`;
+    return;
+  }
+  // unique
+  const rows = r.changed_cells.map((c) => `
+    <tr>
+      <td><span class="check-id">${esc(c.check_id)}</span> ${esc(c.check_name)}</td>
+      <td><span class="badge ${c.phase === "post" ? "badge-post" : "badge-pre"}">${phaseLabel(c.phase)}</span></td>
+      <td class="cal-before">${esc(c.before)}</td>
+      <td class="cal-arrow">→</td>
+      <td class="cal-after">${esc(c.after)}</td>
+    </tr>`).join("");
+  const checkLines = (r.orders_check || []).map((o) => {
+    const detail = o.mismatch_count === 0
+      ? "全部相符"
+      : `1 项不符：${o.mismatches.map((m) => `${esc(m.check_id)}（工单记 ${esc(m.order_value)}）`).join("、")}`;
+    return `<li>${esc(o.order_id)}：${detail}</li>`;
+  }).join("");
+  slot.innerHTML = `
+    <div class="hero hero-green cal-hero">
+      <h2>🛠 校订方案唯一：共改 ${r.min_changes} 格</h2>
+      <p class="lead">「${esc(r.fault_id)} ${esc(r.fault_name)}」列的预期读数调整如下（其余故障与检查不变）：</p>
+      <div class="table-scroll">
+        <table class="cal-diff-table">
+          <thead><tr><th>检查项</th><th>阶段</th><th>原值</th><th></th><th>校订后</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+      <details class="branch-preview">
+        <summary>核对：校订后每份工单的不符项（每单 ≤ 1 项）</summary>
+        <ul>${checkLines}</ul>
+      </details>
+      <div class="cal-actions">
+        <button class="btn-solid" id="btn-cal-apply">📂 载入校订后的故障表</button>
+        <button class="btn btn-cal" id="btn-cal-download">⬇ 下载校订表 JSON</button>
+      </div>
+    </div>`;
+  $("btn-cal-download").onclick = () => {
+    const blob = new Blob([JSON.stringify(CAL_LAST.table, null, 2)],
+      { type: "application/json" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "calibrated_fault_table.json";
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  };
+  $("btn-cal-apply").onclick = async () => {
+    try {
+      const payload = await api("/api/table/load", {
+        method: "POST",
+        body: JSON.stringify(CAL_LAST.table),
+      });
+      DATA = payload;
+      render();
+      toast("已载入校订后的故障表。");
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    } catch (e) {
+      toast("载入校订表失败：" + e.message, true);
+    }
+  };
+}
+
+$("btn-cal-files").addEventListener("click", () => $("cal-files").click());
+
+$("cal-files").addEventListener("change", (ev) => {
+  CAL_FILES = Array.from(ev.target.files || []).slice(0, 8);
+  if ((ev.target.files || []).length > 8) toast("最多选择 8 份工单，已只保留前 8 个。", true);
+  renderCalFileList();
+  ev.target.value = "";
+});
+
+$("btn-cal-run").addEventListener("click", async () => {
+  const slot = $("cal-result");
+  try {
+    const orders = await collectOrders(CAL_FILES);
+    const faultId = $("cal-fault").value;
+    slot.innerHTML = `<p class="loading">正在校订…</p>`;
+    const r = await api("/api/calibrate", {
+      method: "POST",
+      body: JSON.stringify({ fault_id: faultId, orders }),
+    });
+    renderCalResult(r);
+  } catch (e) {
+    CAL_LAST = null;
+    const msg = e.payload && e.payload.errors ? e.payload.errors.join("；") : e.message;
+    slot.innerHTML = `
+      <div class="hero hero-red cal-hero">
+        <h2>⚠️ 校订请求被拒绝</h2>
+        <p class="lead">${esc(msg)}</p>
+      </div>`;
+  }
+});
+
 /* ---------------- JSON 载入 ---------------- */
 $("btn-upload").addEventListener("click", () => $("file-json").click());
 
@@ -472,6 +636,8 @@ $("file-json").addEventListener("change", async (ev) => {
       body: JSON.stringify(table),
     });
     DATA = payload;
+    CAL_LAST = null;
+    $("cal-result").innerHTML = "";
     render();
     toast(`已载入故障表：${DATA.table.title}`);
   } catch (e) {
@@ -488,6 +654,8 @@ $("btn-restore").addEventListener("click", async () => {
   try {
     const raw = await (await fetch("/api/table/sample")).json();
     DATA = await api("/api/table/load", { method: "POST", body: JSON.stringify(raw) });
+    CAL_LAST = null;
+    $("cal-result").innerHTML = "";
     render();
     toast("已恢复为服务端默认故障表。");
   } catch (e) {
@@ -496,6 +664,8 @@ $("btn-restore").addEventListener("click", async () => {
 });
 
 $("btn-reset").addEventListener("click", doReset);
+
+renderCalFileList();
 
 /* ---------------- 重启计时器（补充展示，不参与计算） ---------------- */
 setInterval(() => {
