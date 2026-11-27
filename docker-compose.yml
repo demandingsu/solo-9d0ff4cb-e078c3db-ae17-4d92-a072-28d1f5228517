@@ -1,0 +1,23 @@
+services:
+  blackout-diagnostics:
+    build: .
+    image: blackout-diagnostics:latest
+    container_name: blackout-diagnostics
+    ports:
+      # 可用 HOST_PORT=8080 docker compose up 覆盖宿主机端口
+      - "${HOST_PORT:-8000}:8000"
+    environment:
+      # 容器内 JSON 故障表路径；可通过挂载 ./data 替换为现场故障表
+      FAULT_TABLE_PATH: /app/data/black_screen.json
+      # 多实例部署时请通过宿主环境注入固定 SECRET_KEY：
+      # SECRET_KEY: ${SECRET_KEY}
+    volumes:
+      # 只读挂载，替换宿主机 ./data 中的 JSON 后重启容器即可换表
+      - ./data:/app/data:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=4).status == 200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 6s

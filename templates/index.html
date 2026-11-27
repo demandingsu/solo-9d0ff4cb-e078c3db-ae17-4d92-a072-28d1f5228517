@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>展厅播放器黑屏排查 · 最小最坏耗时推荐</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🖥️</text></svg>" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div class="brand">
+        <span class="brand-icon">🖥️</span>
+        <div>
+          <h1>展厅播放器黑屏排查台</h1>
+          <p class="subtitle">JSON 故障表 · 极小极大推荐下一步 · 最坏剩余耗时最短</p>
+        </div>
+      </div>
+      <div class="top-actions">
+        <button id="btn-upload" class="btn">📂 载入 JSON 故障表</button>
+        <input type="file" id="file-json" accept=".json,application/json" hidden />
+        <a id="link-sample" class="btn btn-ghost" href="/api/table/sample?download=1">⬇ 下载样例 JSON</a>
+        <button id="btn-restore" class="btn btn-ghost">↩ 恢复默认表</button>
+        <button id="btn-reset" class="btn btn-warn">🔄 重置本次排查</button>
+      </div>
+    </div>
+    <div id="load-error" class="load-error" hidden></div>
+  </header>
+
+  <main class="layout">
+    <section class="main-col">
+      <div id="banner-slot"></div>
+      <div id="recommend-slot"></div>
+      <div id="groups-slot"></div>
+
+      <section class="card matrix-card">
+        <div class="card-head">
+          <h2>故障 — 检查预期读数矩阵</h2>
+          <p id="table-meta" class="muted"></p>
+        </div>
+        <div id="matrix-slot" class="table-scroll">
+          <p class="loading">正在载入故障表…</p>
+        </div>
+      </section>
+    </section>
+
+    <aside class="side-col">
+      <section class="card" id="phase-card"></section>
+      <section class="card" id="time-card"></section>
+      <section class="card" id="candidate-card"></section>
+      <section class="card help-card">
+        <h2>使用说明</h2>
+        <ol>
+          <li>先在矩阵左侧录入<strong>重启前检查</strong>的实测读数；直接修改旧读数即可更正，不会影响其他读数或重启状态。</li>
+          <li>需要时<strong>登记一次重启</strong>，重启耗时计入总时间；重启后不能再补做重启前检查。</li>
+          <li>按顶部推荐执行，每录入一条读数，推荐会即时调整。</li>
+          <li>只剩一种故障时直接报结果；读数无匹配时请核对；无法保证查明时会列出仍分不清的故障组。</li>
+        </ol>
+      </section>
+    </aside>
+  </main>
+
+  <div id="toast" class="toast" hidden></div>
+  <footer class="footer">
+    <span>Flask + 极小极大决策 DP · 最多 8 故障 / 10 检查 · Docker Compose 启动</span>
+  </footer>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
